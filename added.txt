@@ -1,0 +1,54 @@
+#set page(margin: 0.4in, height: auto)
+#set par(leading: 1.2em, first-line-indent: 0em, justify: false)
+#set text(font: "New Computer Modern")
+// #show par: set block(spacing: 0.55em)
+#show heading: set block(above: 1.4em, below: 1em)
+#show heading.where(level: 1): set align(left)
+#show heading.where(level: 1): set text(1em)
+#show heading.where(level: 1): it => { pagebreak(weak: true); it }
+// #show heading: it => link(<home>, it.body)
+#show math.equation.where(block: false): element => [#math.display(element)]
+#show link: underline
+
+#let prod = $display(limits(product))$
+#let double = $space space$
+#let make = sym.supset.sq
+#let see = $angle.spheric quad$
+#let def = strong("Определение:")
+#let dp(first, second)=$angle.l #first, #second angle.r$
+#let sum=$limits(sum)$
+#let lim=$limits(lim)$
+#let proof=par(strong("Доказательство:"))
+#let th=strong("Теорема:")
+#let lm=strong("Лемма:")
+#let defnot = strong("Обозначение:")
+#let nb = strong("Замечание: ")
+#let int=$display(integral)$
+#let emptyset=$diameter$
+#let qed=$space qed$
+#let note=strong("Замечание:")
+#let cor(..number)= {
+  if number.pos().len() == 0 {
+    strong("Следствие:")
+  }
+  else {
+    strong("Следствие " + str(number.pos().at(0)) + ":")
+  }
+}
+#let limsup = $overline(lim)$
+#let liminf = $underline(lim)$
+#let smile = emoji.face.smile.slight
+#let frown = emoji.face.frown.slight
+#let wink = emoji.face.wink
+#let pole(a, b) = $lr(|, size: #200%)_#pad(bottom: -13pt)[$#a$]^#pad(top: -13pt)[$#b$]$
+
+#let gr(body) = text(fill: gray)[#body]
+#let wh(body) = text(fill: white)[#body]
+#let eps = $epsilon$
+
+#let Lin(first, second) = $"Lin"(#first, #second)$
+#let von = v(0.1cm)
+#let vtw = v(0.2cm)
+#let vth = v(0.3cm)
+#let vfo = v(0.4cm)
+#let vfi = v(0.5cm)
