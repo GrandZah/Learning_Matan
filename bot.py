@@ -12,6 +12,14 @@ DB_PATH = "flashcards.db"
 # Регистрация адаптера для работы с datetime
 register_adapter(datetime, lambda val: val.isoformat())
 
+intervals = [
+    timedelta(seconds=0),  # Уровень 0: немедленно
+    timedelta(minutes=15),  # Уровень 1: через 15 минут
+    timedelta(hours=4),  # Уровень 2: через 4 часа
+    timedelta(hours=8),  # Уровень 3: через 8 часов
+    timedelta(days=1.5)  # Уровень 4: через 1.5 дня
+]
+
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -82,18 +90,13 @@ def add_existing_cards_to_db():
 
 # --- Методика промежуточного повторения ---
 def calculate_next_review(confidence: int) -> datetime:
-    if confidence == 0:
-        return datetime.now()
-    elif confidence == 1:
-        return datetime.now() + timedelta(minutes=1)
-    elif confidence == 2:
-        return datetime.now() + timedelta(hours=4)
-    elif confidence == 3:
-        return datetime.now() + timedelta(hours=8)
-    elif confidence == 4:
-        return datetime.now() + timedelta(days=1.5)
-    else:
-        return datetime.now()
+    # Получаем текущий момент времени
+    now = datetime.now()
+
+    # Возвращаем время следующего повторения для заданного уровня
+    # Если confidence выходит за пределы массива, возвращаем текущее время
+    return now + intervals[confidence] if 0 <= confidence < len(intervals) else now
+
 
 
 def add_user_to_db(user_id: int, username: str):
@@ -219,12 +222,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Очищаем список сообщений
         context.user_data["bot_messages"] = []
 
-    # Отправляем приветственное сообщение
     sent_message = await update.effective_message.reply_text(
-        "Привет! Добро пожаловать в бота для изучения карточек.\n"
-        "Используйте команды, чтобы начать обучение:\n"
+        "Привет! Добро пожаловать в бота для изучения карточек с использованием методики интервального повторения.\n\n"
+        "📋 **Доступные команды:**\n"
         "/learn - учить новые карточки\n"
         "/review - повторять карточки\n"
+        "/statistic - посмотреть вашу статистику\n"
+        "/about - узнать больше о боте и методике\n\n"
+        "Начните обучение уже сейчас и улучшайте свои знания шаг за шагом!"
     )
 
     # Сохраняем ID нового сообщения, отправленного ботом
@@ -408,7 +413,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "view_image":
         with open(image_path, 'rb') as img:
+            # Отправляем изображение как фото
             await query.message.reply_photo(photo=InputFile(img))
+
+        with open(image_path, 'rb') as img:
+            # Отправляем то же изображение как документ (без сжатия)
+            await query.message.reply_document(document=InputFile(img))
+
 
     elif query.data == "know":
         update_flashcard_review(user_id, card_id, True)
@@ -424,6 +435,88 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_next_card(query, user_id, context)
 
 
+async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Генерация текста для интервалов
+    intervals_text = "\n".join(
+        [f"{i}: Через {format_timedelta(interval)}" for i, interval in enumerate(intervals)]
+    )
+
+    about_text = (
+        "Этот бот предназначен для изучения карточек с использованием методики интервального повторения.\n\n"
+        "📌 **Как это работает?**\n"
+        "Когда вы изучаете карточки, бот определяет ваш уровень уверенности в ответах:\n\n"
+        f"{intervals_text}\n\n"
+        "Карточки, которые вы знаете лучше, будут показываться реже, а те, которые сложнее, — чаще.\n\n"
+        "Для начала работы используйте команды:\n"
+        "/learn - учить новые карточки\n"
+        "/review - повторять карточки\n"
+        "/statistic - посмотреть вашу статистику\n"
+    )
+
+    await update.message.reply_text(about_text)
+
+
+def format_timedelta(delta: timedelta) -> str:
+    """Форматирует timedelta в читаемую строку."""
+    days = delta.days
+    hours, remainder = divmod(delta.seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days} дн.")
+    if hours > 0:
+        parts.append(f"{hours} ч.")
+    if minutes > 0:
+        parts.append(f"{minutes} мин.")
+    if seconds > 0:
+        parts.append(f"{seconds} сек.")
+
+    return ", ".join(parts) if parts else "0 сек."
+
+
+async def statistic(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Подсчет общего количества карточек
+    cursor.execute('''SELECT COUNT(*) FROM user_flashcards WHERE user_id = ?''', (user_id,))
+    total_cards = cursor.fetchone()[0]
+
+    # Подсчет карточек на каждом уровне уверенности
+    cursor.execute('''
+        SELECT confidence, COUNT(*)
+        FROM user_flashcards
+        WHERE user_id = ?
+        GROUP BY confidence
+        ORDER BY confidence ASC
+    ''', (user_id,))
+    level_stats = cursor.fetchall()
+
+    conn.close()
+
+    # Формируем сообщение со статистикой
+    if total_cards == 0:
+        stats_message = "У вас пока нет карточек. Начните с /learn, чтобы добавить новые!"
+    else:
+        stats_message = f"📊 Ваша статистика:\n\n"
+        stats_message += f"Общее количество карточек: {total_cards}\n\n"
+        stats_message += "Уровень уверенности:\n"
+
+        # Добавляем статистику по уровням
+        levels = {i: 0 for i in range(5)}  # Уровни от 0 до 4
+        for level, count in level_stats:
+            levels[level] = count
+
+        for level, count in levels.items():
+            stats_message += f"  Уровень {level}: {count} карточек\n"
+
+    # Отправляем сообщение
+    await update.message.reply_text(stats_message)
+
+
 # --- Запуск бота ---
 def main():
     init_db()
@@ -434,6 +527,8 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("learn", learn))
     application.add_handler(CommandHandler("review", review))
+    application.add_handler(CommandHandler("about", about))
+    application.add_handler(CommandHandler("statistic", statistic))
     application.add_handler(CallbackQueryHandler(button_handler))
 
     application.run_polling()
