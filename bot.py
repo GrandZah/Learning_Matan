@@ -12,6 +12,7 @@ DB_PATH = "flashcards.db"
 # Регистрация адаптера для работы с datetime
 register_adapter(datetime, lambda val: val.isoformat())
 
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -57,7 +58,6 @@ def init_db():
     conn.close()
 
 
-
 def add_existing_cards_to_db():
     """Добавляет карточки из папки output_images в базу данных, если их там еще нет."""
     conn = sqlite3.connect(DB_PATH)
@@ -79,6 +79,7 @@ def add_existing_cards_to_db():
     conn.commit()
     conn.close()
 
+
 # --- Методика промежуточного повторения ---
 def calculate_next_review(confidence: int) -> datetime:
     if confidence == 0:
@@ -94,6 +95,7 @@ def calculate_next_review(confidence: int) -> datetime:
     else:
         return datetime.now()
 
+
 def add_user_to_db(user_id: int, username: str):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -103,6 +105,7 @@ def add_user_to_db(user_id: int, username: str):
 
     conn.commit()
     conn.close()
+
 
 def get_user_status(user_id):
     """Возвращает текущий статус пользователя."""
@@ -114,6 +117,7 @@ def get_user_status(user_id):
     conn.close()
 
     return result[0] if result else "idle"
+
 
 def set_user_status(user_id, status):
     """Устанавливает текущий статус пользователя."""
@@ -139,6 +143,7 @@ def get_due_flashcards(user_id: int):
 
     return flashcards
 
+
 def get_new_flashcards(user_id: int):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -151,6 +156,7 @@ def get_new_flashcards(user_id: int):
 
     return flashcards
 
+
 def assign_card_to_user(card_id: int, user_id: int):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -160,6 +166,7 @@ def assign_card_to_user(card_id: int, user_id: int):
 
     conn.commit()
     conn.close()
+
 
 def update_flashcard_review(user_id: int, card_id: int, success: bool):
     conn = sqlite3.connect(DB_PATH)
@@ -187,6 +194,7 @@ def update_flashcard_review(user_id: int, card_id: int, success: bool):
     conn.commit()
     conn.close()
 
+
 # --- Основная логика бота ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -195,13 +203,55 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Устанавливаем статус пользователя на 'idle'
     set_user_status(user.id, "idle")
 
+    # Удаляем кнопки у всех предыдущих сообщений, отправленных ботом
+    if "bot_messages" in context.user_data:
+        for message_id in context.user_data["bot_messages"]:
+            try:
+                await context.bot.edit_message_reply_markup(
+                    chat_id=update.effective_chat.id,
+                    message_id=message_id,
+                    reply_markup=None
+                )
+            except Exception as e:
+                # Игнорируем ошибки, если сообщение уже недоступно для редактирования
+                print(f"Не удалось удалить кнопки у сообщения {message_id}: {e}")
+
+        # Очищаем список сообщений
+        context.user_data["bot_messages"] = []
+
     # Отправляем приветственное сообщение
-    await update.message.reply_text(
+    sent_message = await update.effective_message.reply_text(
         "Привет! Добро пожаловать в бота для изучения карточек.\n"
         "Используйте команды, чтобы начать обучение:\n"
         "/learn - учить новые карточки\n"
         "/review - повторять карточки\n"
     )
+
+    # Сохраняем ID нового сообщения, отправленного ботом
+    if "bot_messages" not in context.user_data:
+        context.user_data["bot_messages"] = []
+    context.user_data["bot_messages"].append(sent_message.message_id)
+
+
+
+async def check_user_status(user_id: int, message, required_status: str = "idle") -> bool:
+    """
+    Проверяет текущий статус пользователя и возвращает True, если он соответствует требуемому.
+    В противном случае отправляет сообщение и возвращает False.
+
+    :param user_id: ID пользователя.
+    :param message: Сообщение для отправки ответа пользователю.
+    :param required_status: Требуемый статус пользователя (по умолчанию "idle").
+    :return: True, если статус соответствует, иначе False.
+    """
+    current_status = get_user_status(user_id)
+    if current_status != required_status:
+        await message.reply_text(
+            "Вы уже выполняете другую задачу. Чтобы сменить состояние, введите /start."
+        )
+        return False
+    return True
+
 
 async def learn(update: Update | CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     # Если update — это CallbackQuery, извлекаем user_id из него
@@ -211,6 +261,9 @@ async def learn(update: Update | CallbackQuery, context: ContextTypes.DEFAULT_TY
     else:  # Иначе это обычный Update
         user_id = update.effective_user.id
         message = update.message
+        # Проверяем статус пользователя
+        if not await check_user_status(user_id, message):
+            return
 
     # Установить статус "learning"
     set_user_status(user_id, "learning")
@@ -236,7 +289,12 @@ async def learn(update: Update | CallbackQuery, context: ContextTypes.DEFAULT_TY
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     message = update.message if update.message else update.callback_query.message
-    await message.reply_text(f"Карточка: {os.path.basename(image_path)}", reply_markup=reply_markup)
+    response = await message.reply_text(f"Карточка: {os.path.basename(image_path)}", reply_markup=reply_markup)
+
+    # Сохраняем ID сообщения в контекст
+    if "bot_messages" not in context.user_data:
+        context.user_data["bot_messages"] = []
+    context.user_data["bot_messages"].append(response.message_id)
 
 async def review(update: Update | CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     # Если update — это CallbackQuery, извлекаем user_id из него
@@ -246,7 +304,9 @@ async def review(update: Update | CallbackQuery, context: ContextTypes.DEFAULT_T
     else:  # Иначе это обычный Update
         user_id = update.effective_user.id
         message = update.message
-
+        # Проверяем статус пользователя
+        if not await check_user_status(user_id, message):
+            return
 
     # Установить статус "reviewing"
     set_user_status(user_id, "reviewing")
@@ -271,7 +331,12 @@ async def review(update: Update | CallbackQuery, context: ContextTypes.DEFAULT_T
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     message = update.message if update.message else update.callback_query.message
-    await message.reply_text(f"Карточка: {os.path.basename(image_path)}", reply_markup=reply_markup)
+    response = await message.reply_text(f"Карточка: {os.path.basename(image_path)}", reply_markup=reply_markup)
+
+    # Сохраняем ID сообщения в контекст
+    if "bot_messages" not in context.user_data:
+        context.user_data["bot_messages"] = []
+    context.user_data["bot_messages"].append(response.message_id)
 
 async def show_next_card(query, user_id, context):
     """Определяет текущий статус пользователя и показывает следующую карточку."""
@@ -323,7 +388,6 @@ async def show_next_card(query, user_id, context):
         )
 
 
-
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -373,6 +437,7 @@ def main():
     application.add_handler(CallbackQueryHandler(button_handler))
 
     application.run_polling()
+
 
 if __name__ == "__main__":
     main()
