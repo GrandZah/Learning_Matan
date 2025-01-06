@@ -1,6 +1,6 @@
 import os
-from telegram import Update, InputFile
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import sqlite3
 from datetime import datetime, timedelta
 from config import BOT_TOKEN  # BOT_TOKEN хранится в отдельном файле config.py
@@ -38,7 +38,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 def add_existing_cards_to_db():
     """Добавляет карточки из папки output_images в базу данных, если их там еще нет."""
     conn = sqlite3.connect(DB_PATH)
@@ -64,7 +63,6 @@ def add_existing_cards_to_db():
 def calculate_next_review(interval: int) -> datetime:
     return datetime.now() + timedelta(days=interval)
 
-
 def add_user_to_db(user_id: int, username: str):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -74,7 +72,6 @@ def add_user_to_db(user_id: int, username: str):
 
     conn.commit()
     conn.close()
-
 
 def get_due_flashcards(user_id: int):
     conn = sqlite3.connect(DB_PATH)
@@ -88,7 +85,6 @@ def get_due_flashcards(user_id: int):
 
     return flashcards
 
-
 def get_new_flashcards(user_id: int):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -101,7 +97,6 @@ def get_new_flashcards(user_id: int):
 
     return flashcards
 
-
 def assign_card_to_user(card_id: int, user_id: int):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -111,7 +106,6 @@ def assign_card_to_user(card_id: int, user_id: int):
 
     conn.commit()
     conn.close()
-
 
 def update_flashcard_review(card_id: int, success: bool):
     conn = sqlite3.connect(DB_PATH)
@@ -139,13 +133,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_user_to_db(user.id, user.username)
     await update.message.reply_text("Привет! Я помогу тебе учить карточки. Используй /review, чтобы начать повторение, или /learn, чтобы начать обучение.")
 
-
 async def learn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user_id = update.effective_user.id if update.effective_user else update.callback_query.from_user.id
     flashcards = get_new_flashcards(user_id)
 
     if not flashcards:
-        await update.message.reply_text("Все карточки уже были просмотрены. Попробуйте /review для повторения.")
+        message = update.message if update.message else update.callback_query.message
+        await message.reply_text("Все карточки уже были просмотрены. Попробуйте /review для повторения.")
         return
 
     # Отправляем первую новую карточку
@@ -153,49 +147,81 @@ async def learn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['current_card'] = card_id
     assign_card_to_user(card_id, user_id)
 
-    with open(image_path, 'rb') as img:
-        await update.message.reply_photo(photo=InputFile(img), caption="Что изображено на этой карточке?")
+    keyboard = [
+        [InlineKeyboardButton("Посмотреть изображение", callback_data="view_image")],
+        [InlineKeyboardButton("Знаю", callback_data="know")],
+        [InlineKeyboardButton("Не знаю", callback_data="dont_know")],
+    ]
 
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    message = update.message if update.message else update.callback_query.message
+    await message.reply_text(f"Карточка: {os.path.basename(image_path)}", reply_markup=reply_markup)
 
 async def review(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user_id = update.effective_user.id if update.effective_user else update.callback_query.from_user.id
     flashcards = get_due_flashcards(user_id)
 
     if not flashcards:
-        await update.message.reply_text("На сегодня карточек для повторения нет. Возвращайся завтра!")
+        message = update.message if update.message else update.callback_query.message
+        await message.reply_text("На сегодня карточек для повторения нет. Возвращайся завтра!")
         return
 
     # Отправляем первую карточку
     card_id, image_path = flashcards[0]
     context.user_data['current_card'] = card_id
 
-    with open(image_path, 'rb') as img:
-        await update.message.reply_photo(photo=InputFile(img), caption="Что изображено на этой карточке?")
+    keyboard = [
+        [InlineKeyboardButton("Посмотреть изображение", callback_data="view_image")],
+        [InlineKeyboardButton("Знаю", callback_data="know")],
+        [InlineKeyboardButton("Не знаю", callback_data="dont_know")],
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    message = update.message if update.message else update.callback_query.message
+    await message.reply_text(f"Карточка: {os.path.basename(image_path)}", reply_markup=reply_markup)
 
 
-async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_answer = update.message.text
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
     card_id = context.user_data.get('current_card')
 
     if not card_id:
-        await update.message.reply_text("Сначала начните с /review или /learn.")
+        await query.message.reply_text("Сначала начните с /review или /learn.")
         return
 
-    # Здесь можно внедрить проверку правильности ответа (например, через ML или заранее заданный ответ).
-    success = True  # Заглушка: считать все ответы правильными
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
 
-    update_flashcard_review(card_id, success)
+    cursor.execute('''SELECT image_path FROM flashcards WHERE id = ?''', (card_id,))
+    image_path = cursor.fetchone()[0]
+    conn.close()
 
-    if success:
-        await update.message.reply_text("Правильно! Перейдем к следующей карточке.")
-    else:
-        await update.message.reply_text("Неправильно. Попробуй снова позже.")
+    if query.data == "view_image":
+        with open(image_path, 'rb') as img:
+            await query.message.reply_photo(photo=InputFile(img))
 
-    # Убираем текущую карточку из user_data
-    context.user_data.pop('current_card', None)
+    elif query.data == "know":
+        update_flashcard_review(card_id, True)
+        keyboard = [[InlineKeyboardButton("Продолжить обучение", callback_data="next_card")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("Правильно! Перейдем к следующей карточке.", reply_markup=reply_markup)
 
-    # Переходим к следующей карточке
-    await review(update, context)
+    elif query.data == "dont_know":
+        update_flashcard_review(card_id, False)
+        keyboard = [[InlineKeyboardButton("Продолжить обучение", callback_data="next_card")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("Неправильно. Попробуй снова позже.", reply_markup=reply_markup)
+
+    elif query.data == "next_card":
+        # Здесь мы вызываем review для следующей карточки
+        await learn(update, context)
+
 
 # --- Запуск бота ---
 def main():
@@ -207,10 +233,9 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("learn", learn))
     application.add_handler(CommandHandler("review", review))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, answer))
+    application.add_handler(CallbackQueryHandler(button_handler))
 
     application.run_polling()
-
 
 if __name__ == "__main__":
     main()

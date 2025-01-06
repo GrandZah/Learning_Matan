@@ -7,7 +7,7 @@ import subprocess
 def sanitize_filename(filename):
     sanitized = re.sub(r'[^a-zA-Zа-яА-Я0-9]', '_', filename)
     sanitized = re.sub(r'_+', '_', sanitized).strip('_')
-    return sanitized[:50]
+    return sanitized
 
 def generate_image_from_typst(typst_file, output_image_path):
     output_image_path_with_page = output_image_path.replace(".png", "-{p}.png")
