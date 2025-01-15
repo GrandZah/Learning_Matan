@@ -18,6 +18,7 @@ def generate_image_from_typst(typst_file, output_image_path):
     except subprocess.CalledProcessError as e:
         print(f"Ошибка при генерации изображения из {typst_file}: {e}")
 
+
 def split_typst_file(input_file, output_dir, images_dir, added_text_file, extract_to):
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(images_dir, exist_ok=True)
@@ -41,7 +42,13 @@ def split_typst_file(input_file, output_dir, images_dir, added_text_file, extrac
             section_content = section_split[1] if len(section_split) > 1 else ""
 
         section_content = re.sub(r'\n=+.*$', '', section_content.strip())
-        section_content = re.sub(r'#link\(label\([^)]+\)\)\[.*?\]', '', section_content)
+        # Шаблон для поиска ссылок
+        pattern = r"#link\(<.*?>\)\[(.*?)\]"
+
+        # Замена: оставляем только текст ссылки
+        section_content = re.sub(pattern, r"\1", section_content)
+
+        # section_content = re.sub(r'#link\(label\([^)]+\)\)\[.*?\]', '', section_content)
 
         sanitized_title = sanitize_filename(section_title)
         filename = f"{i:02d}_{sanitized_title}.typst"

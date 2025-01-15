@@ -52,3 +52,32 @@
 #let vth = v(0.3cm)
 #let vfo = v(0.4cm)
 #let vfi = v(0.5cm)
+
+#let Re = "Re"
+#let Im = "Im"
+
+
+#let list_depth = counter("list_depth")
+#let clist_cnt = counter("clist_cnt")
+#let clist = [
+  #context clist_cnt.step()
+]
+#let llist = [
+  #context clist_cnt.update(0)
+]
+#show enum: it => [
+  #context list_depth.step()
+  #it
+  #context list_depth.update(0)
+]
+#show enum: it => [
+  #context if (list_depth.get() == (0, )) and (clist_cnt.get() == (1, )) {
+  table(columns: (1fr, auto, 1fr), inset: 0pt, stroke: none, [], [#it], [])
+} else {
+    [#it]
+}
+]
+#show math.equation.where(block: true): e => box(width: 100%, inset: 0em, [
+  #set align(center)
+  #e
+])
